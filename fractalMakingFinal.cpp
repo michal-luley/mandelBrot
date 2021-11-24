@@ -4,17 +4,14 @@
 #include <iostream>
 #include <omp.h>
 #include <mpi.h>
+#include <vector>
 
 using namespace cv;
 using namespace std;
 
-
 #define MAX_ITER 1000
-#define WIDTH 1000
-#define HEIGHT 1000
-uchar buffer[1000*1000*50];
-
-Mat image_generated;
+#define WIDTH 900
+#define HEIGHT 900
 
 float scale(float A, float A2, float Min, float Max)
 {
@@ -41,142 +38,100 @@ int mandelbrot(double x_orig, double y_orig) {
 	return iteration;
 }
 
-Mat setColorsOfPixel(Mat image, int row_start, int row_end) {
-	int x;
-	int y;
+void setColorsOfPixel(vector <vector<uint32_t> > pole, int row_start, int row_end) {
+	int x, y;
 	int iter;
 	int scaled_value;
 
 	for (x = 0; x < WIDTH; x++) {
 		for (y = row_start; y < row_end; y++) {
 			iter = mandelbrot(x, y);
-
 			scaled_value = scale(MAX_ITER, iter, 255, 0);
-			Vec3b pixel;
-			pixel.val[0] = scaled_value;
-			pixel.val[1] = scaled_value;
-			pixel.val[2] = scaled_value;
-			image.at<Vec3b>(Point(x, y)) = pixel;
+			pole[x][y] = scaled_value;
 		}
 	}
-	return image;
 }
 
-
-Mat matrcv() {
+void matrcv() {
 	MPI_Status status;
-	int count, rows, cols, type, channels, ntasks;
-	int src = 1;
+	int id_source, ntasks;
+	int row_start, row_end, count;
+	int all;
 
 	MPI_Comm_size(MPI_COMM_WORLD, &ntasks);
+	
+	std::vector <vector<uint32_t> >received(HEIGHT, vector<uint32_t>(WIDTH));
 	ntasks--;
-
+	all = ntasks;
+	count = WIDTH * HEIGHT;
 	
-	for (int i = 1; i < 3; i++) {
-		MPI_Recv(&buffer, sizeof(buffer), MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &status);
-		MPI_Get_count(&status, MPI_UNSIGNED_CHAR, &count);
-
-		int row_start, row_end;
-		src--;
-
-		row_start = (double)i / (double)ntasks * HEIGHT;
-		row_end = ((double)i + 1.0) / (double)ntasks * HEIGHT;
-
-		memcpy((uchar*)&rows, &buffer[0 * sizeof(int)], sizeof(int));
-		memcpy((uchar*)&cols, &buffer[1 * sizeof(int)], sizeof(int));
-		memcpy((uchar*)&type, &buffer[2 * sizeof(int)], sizeof(int));
-
+	//receiving image
+	while (all != 0) {
+		MPI_Recv(&received[0][0], count, MPI_UINT32_T, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+		//id_source = status.MPI_SOURCE;
+		//row_start = (double)id_source / (double)ntasks * HEIGHT;
+		//row_end = ((double)id_source + 1.0) / (double)ntasks * HEIGHT;
+		all--;
 	}
-	
-	// Make the mat
-	Mat received = Mat(rows, cols, type, (uchar*)&buffer[3 * sizeof(int)]);
-	return received;
+	cout << "donereceiver";
 }
 
-void matsnd(const Mat& m) {
-	int rows = m.rows;
-	int cols = m.cols;
-	int type = m.type();
-	int channels = m.channels();
-	int bytes = m.rows * m.cols * channels * 1;
-	int dest = 0;
+void matsnd() {
+	int count;
 	int id, ntasks;
 	int row_start, row_end;
 
+	std::vector <vector<uint32_t> >original(HEIGHT, vector<uint32_t>(WIDTH));
+	
+	//important MPI stuff
+	MPI_Status status;
 	MPI_Comm_rank(MPI_COMM_WORLD, &id);
 	MPI_Comm_size(MPI_COMM_WORLD, &ntasks);
-	ntasks--;
+	id--;
+	count = WIDTH * HEIGHT;
 	
-	if (id == 1) {
-		row_start = (double)id / (double)ntasks * HEIGHT;
-		row_end = ((double)id + 1.0) / (double)ntasks * HEIGHT;
-
-		Mat new_image = setColorsOfPixel(m, row_start, row_end);
-
-		memcpy(&buffer[3 * sizeof(int)], new_image.data, bytes);
-		MPI_Send(&buffer, bytes + 3 * sizeof(int), MPI_UNSIGNED_CHAR, dest, 0, MPI_COMM_WORLD);
-	}
-
-	if (id == 2) {
-		row_start = (double)id / (double)ntasks * HEIGHT;
-		row_end = ((double)id + 1.0) / (double)ntasks * HEIGHT;
-
-		Mat new_image = setColorsOfPixel(m, row_start, row_end);
-
-		memcpy(&buffer[3 * sizeof(int)], new_image.data, bytes);
-		MPI_Send(&buffer, bytes + 3 * sizeof(int), MPI_UNSIGNED_CHAR, dest, 0, MPI_COMM_WORLD);
-	}
-
+	//define own rows to process;
+	row_start = (double)id / (double)ntasks * HEIGHT;
+	row_end = ((double)id + 1.0) / (double)ntasks * HEIGHT;
+	cout << "done";
+	setColorsOfPixel(original, row_start, row_end);
+	MPI_Send(&original[0][0], count, MPI_UINT32_T, 0, 0, MPI_COMM_WORLD);
 }
-
 
 int main(int argc, char** argv)
 {
-	int err, np, me, source_id;
+	int err, np, me, i, j;
 	MPI_Status status;
 
 	Mat image = Mat::zeros(WIDTH, HEIGHT, CV_8UC3);
-	//Mat image2 = Mat::zeros(WIDTH, 5, CV_8UC3);
 
-	
+	std::vector <vector<uint32_t> >received(10000, vector<uint32_t>(10000));
+
 	err = MPI_Init(&argc, &argv);
+	MPI_Comm_rank(MPI_COMM_WORLD, &me);
+	MPI_Comm_size(MPI_COMM_WORLD, &np);
+
 	if (err != MPI_SUCCESS) {
-		cout<<"Couldn't start MPI.\n";
+		cout << "Couldn't start MPI.\n";
 		MPI_Abort(MPI_COMM_WORLD, err);
 	}
 
-	MPI_Comm_size(MPI_COMM_WORLD, &np);
-	MPI_Comm_rank(MPI_COMM_WORLD, &me);
-	
-	
-
-	
-	if (np < 2) {
+	if (np == 1) {
 		if (me == 0) {
-			printf("You have to use exactly 2 processors to run this program\n");
+			printf("You have to use at least 2 processors to run this program\n");
 		}
-		MPI_Finalize();	       
+		MPI_Finalize();
 		exit(0);
 	}
-	Mat genMat;
 	
 	if (me == 0) {
-		genMat = matrcv();
-
+		matrcv();
 	}
-	else if(me==1 or me==2){
-		matsnd(image);
 
+	else {
+		matsnd();
 	}
+
 	MPI_Finalize();
-	
-	
-	//Mat image_scaled;
-	//cv::resize(genMat, image_scaled, cv::Size(900, 900));
-
-	imshow("Display Window", image);
-	waitKey(0);
-	
-
-	return 0;
+	exit(0);
 }
