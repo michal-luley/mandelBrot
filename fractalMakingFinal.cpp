@@ -38,7 +38,7 @@ int mandelbrot(double x_orig, double y_orig) {
 	return iteration;
 }
 
-void setColorsOfPixel(vector <vector<uint32_t> > pole, int row_start, int row_end) {
+void setColorsOfPixel(vector <vector<uint32_t> >& pole, int row_start, int row_end) {
 	int x, y;
 	int iter;
 	int scaled_value;
@@ -46,10 +46,11 @@ void setColorsOfPixel(vector <vector<uint32_t> > pole, int row_start, int row_en
 	for (x = 0; x < WIDTH; x++) {
 		for (y = row_start; y < row_end; y++) {
 			iter = mandelbrot(x, y);
-			scaled_value = scale(MAX_ITER, iter, 255, 0);
-			pole[x][y] = scaled_value;
+			scaled_value = scale(iter, MAX_ITER, 255, 0);
+			pole[y][x] = scaled_value;
 		}
 	}
+
 }
 
 void matrcv() {
@@ -59,21 +60,63 @@ void matrcv() {
 	int all;
 
 	MPI_Comm_size(MPI_COMM_WORLD, &ntasks);
-	
+
 	std::vector <vector<uint32_t> >received(HEIGHT, vector<uint32_t>(WIDTH));
 	ntasks--;
 	all = ntasks;
-	count = WIDTH * HEIGHT;
-	
+
 	//receiving image
-	while (all != 0) {
-		MPI_Recv(&received[0][0], count, MPI_UINT32_T, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-		//id_source = status.MPI_SOURCE;
-		//row_start = (double)id_source / (double)ntasks * HEIGHT;
-		//row_end = ((double)id_source + 1.0) / (double)ntasks * HEIGHT;
-		all--;
+	//while (all != 0) {
+
+	for (int i = 0; i < 300; i++) {
+		MPI_Recv(&received[i][0], WIDTH, MPI_UINT32_T, 1, 0, MPI_COMM_WORLD, &status);
+		
 	}
+	for (int i = 300; i < 600; i++) {
+		MPI_Recv(&received[i][0], WIDTH, MPI_UINT32_T, 2, 0, MPI_COMM_WORLD, &status);
+
+	}
+	for (int i = 600; i < 900; i++) {
+		MPI_Recv(&received[i][0], WIDTH, MPI_UINT32_T, 3, 0, MPI_COMM_WORLD, &status);
+
+	}
+	Mat image = Mat::zeros(WIDTH, HEIGHT, CV_8UC3);
+	for (int i = 0; i < WIDTH; i++) {
+		for (int j = 0; j < HEIGHT; j++) {
+			image.at<Vec3b>(Point(i, j)).val[0] = received[i][j];
+			image.at<Vec3b>(Point(i, j)).val[1] = received[i][j];
+			image.at<Vec3b>(Point(i, j)).val[2] = received[i][j];
+		}
+	}
+	imshow("pokus", image);
+	waitKey(0);
+
+	
+
+
+	
+
+
+	//id_source = status.MPI_SOURCE;
+	//row_start = (double)id_source / (double)ntasks * HEIGHT;
+	//row_end = ((double)id_source + 1.0) / (double)ntasks * HEIGHT;
+	//all--;
+
+	//}
 	cout << "donereceiver";
+
+	/*
+	Mat image = Mat::zeros(WIDTH, HEIGHT, CV_8UC3);
+	for (int i = 0; i < WIDTH; i++) {
+		for (int j = 0; j < HEIGHT; j++) {
+			image.at<Vec3b>(Point(i, j)).val[0] = received[0][j];
+			image.at<Vec3b>(Point(i, j)).val[1] = received[0][j];
+			image.at<Vec3b>(Point(i, j)).val[2] = received[0][j];
+		}
+	}
+	imshow("pokus", image);
+	waitKey(0);
+	*/
 }
 
 void matsnd() {
@@ -82,20 +125,27 @@ void matsnd() {
 	int row_start, row_end;
 
 	std::vector <vector<uint32_t> >original(HEIGHT, vector<uint32_t>(WIDTH));
-	
+
 	//important MPI stuff
 	MPI_Status status;
 	MPI_Comm_rank(MPI_COMM_WORLD, &id);
 	MPI_Comm_size(MPI_COMM_WORLD, &ntasks);
+	ntasks--;
 	id--;
-	count = WIDTH * HEIGHT;
-	
+
 	//define own rows to process;
 	row_start = (double)id / (double)ntasks * HEIGHT;
 	row_end = ((double)id + 1.0) / (double)ntasks * HEIGHT;
-	cout << "done";
 	setColorsOfPixel(original, row_start, row_end);
-	MPI_Send(&original[0][0], count, MPI_UINT32_T, 0, 0, MPI_COMM_WORLD);
+
+
+	for (int i = id*300; i < id*300+300; i++) {
+		MPI_Send(&original[i][0], WIDTH, MPI_UINT32_T, 0, 0, MPI_COMM_WORLD);
+	}
+	
+	
+
+	
 }
 
 int main(int argc, char** argv)
@@ -123,7 +173,7 @@ int main(int argc, char** argv)
 		MPI_Finalize();
 		exit(0);
 	}
-	
+
 	if (me == 0) {
 		matrcv();
 	}
